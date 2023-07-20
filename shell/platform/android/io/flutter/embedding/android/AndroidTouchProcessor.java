@@ -13,9 +13,12 @@ import java.nio.ByteOrder;
 import java.util.HashMap;
 import java.util.Map;
 
+import io.flutter.Log;
+
 /** Sends touch information from Android to Flutter in a format that Flutter understands. */
 public class AndroidTouchProcessor {
 
+  private static final String TAG = "AndroidTouchProcessor";
   // Must match the PointerChange enum in pointer.dart.
   @IntDef({
     PointerChange.CANCEL,
@@ -109,6 +112,7 @@ public class AndroidTouchProcessor {
   }
 
   public boolean onTouchEvent(@NonNull MotionEvent event) {
+    Log.v(TAG, "onTouchEvent, event " + event);
     return onTouchEvent(event, IDENTITY_TRANSFORM);
   }
 
@@ -186,6 +190,9 @@ public class AndroidTouchProcessor {
   public boolean onGenericMotionEvent(@NonNull MotionEvent event) {
     // Method isFromSource is only available in API 18+ (Jelly Bean MR2)
     // Mouse hover support is not implemented for API < 18.
+
+    Log.v(TAG, "onGenericMotionEvent, event " + event);
+
     boolean isPointerEvent =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2
             && event.isFromSource(InputDevice.SOURCE_CLASS_POINTER);
@@ -252,6 +259,7 @@ public class AndroidTouchProcessor {
       buttons = 0;
     }
 
+    int panZoomType = -1;
     boolean isTrackpadPan = ongoingPans.containsKey(event.getPointerId(pointerIndex));
 
     int signalKind =
@@ -264,8 +272,14 @@ public class AndroidTouchProcessor {
     packet.putLong(motionEventId); // motionEventId
     packet.putLong(timeStamp); // time_stamp
     if (isTrackpadPan) {
-      packet.putLong(getPointerChangeForPanZoom(pointerChange)); // change
-      packet.putLong(PointerDeviceKind.TRACKPAD); // kind
+      panZoomType = getPointerChangeForPanZoom(pointerChange);
+      if (panZoomType > 0) {
+        packet.putLong(panZoomType); // change
+        packet.putLong(PointerDeviceKind.TRACKPAD); // kind
+      } else {
+            packet.putLong(pointerChange); // change
+            packet.putLong(pointerKind); // kind
+        }
     } else {
       packet.putLong(pointerChange); // change
       packet.putLong(pointerKind); // kind
@@ -274,7 +288,7 @@ public class AndroidTouchProcessor {
     packet.putLong(event.getPointerId(pointerIndex)); // device
     packet.putLong(0); // pointer_identifier, will be generated in pointer_data_packet_converter.cc.
 
-    if (isTrackpadPan) {
+    if (isTrackpadPan && (panZoomType > 0)) {
       float[] panStart = ongoingPans.get(event.getPointerId(pointerIndex));
       packet.putDouble(panStart[0]);
       packet.putDouble(panStart[1]);
@@ -342,7 +356,7 @@ public class AndroidTouchProcessor {
       packet.putDouble(0.0); // scroll_delta_x
     }
 
-    if (isTrackpadPan) {
+    if (isTrackpadPan && (panZoomType > 0)) {
       float[] panStart = ongoingPans.get(event.getPointerId(pointerIndex));
       packet.putDouble(viewToScreenCoords[0] - panStart[0]);
       packet.putDouble(viewToScreenCoords[1] - panStart[1]);
@@ -355,7 +369,7 @@ public class AndroidTouchProcessor {
     packet.putDouble(1.0); // scale
     packet.putDouble(0.0); // rotation
 
-    if (isTrackpadPan && getPointerChangeForPanZoom(pointerChange) == PointerChange.PAN_ZOOM_END) {
+    if (isTrackpadPan && (panZoomType == PointerChange.PAN_ZOOM_END)) {
       ongoingPans.remove(event.getPointerId(pointerIndex));
     }
   }
@@ -401,7 +415,7 @@ public class AndroidTouchProcessor {
     } else if (pointerChange == PointerChange.UP || pointerChange == PointerChange.CANCEL) {
       return PointerChange.PAN_ZOOM_END;
     }
-    throw new AssertionError("Unexpected pointer change");
+    return -1;
   }
 
   @PointerDeviceKind
